@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import sys
 import tensorflow as tf
 
 class Params():
@@ -93,3 +94,27 @@ def save_dict_to_json(d, json_path):
         # We need to convert the values to float for json (it doesn't accept np.array, np.float, )
         d = {k: float(v) for k, v in d.items()}
         json.dump(d, f, indent=4)
+
+def read_dataset(dataset, evaluate=False):
+    tensors = []
+    it = dataset.make_initializable_iterator()
+    with tf.Session() as sess:
+        sess.run(it.initializer)
+        try:
+            while True: 
+                tensor = sess.run(it.get_next())
+                if not evaluate:
+                    if isinstance(tensor, tuple):
+                        tensor = tuple(tf.constant(subtensor) for subtensor in tensor)
+                    else:
+                        tensor = tf.constant(tensor)
+                tensors.append(tensor)
+        except tf.errors.OutOfRangeError:
+            pass
+    return tensors
+
+def print_dataset(dataset, evaluate=False, end="\n"):
+    for tensor in read_dataset(dataset): 
+        print(tensor)
+    sys.stdout.write(end)
+    sys.stdout.flush()

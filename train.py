@@ -1,5 +1,4 @@
 """Train the model"""
-
 import argparse
 import gensim
 import logging
@@ -18,7 +17,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--model_dir", default="experiments/base_model")
 parser.add_argument('--data_dir', default='data')
 parser.add_argument("--restore_dir", default=None)
-parser.add_argument("--word2vec_file", default="GoogleNews-vectors-negative300.bin")
+parser.add_argument("--word2vec_file", default="GoogleNews-vectors-negative300-slim.bin")
 
 if __name__ == '__main__':
     tf.set_random_seed(230)
@@ -47,14 +46,14 @@ if __name__ == '__main__':
     logging.info("Building datasets...")
     with open(os.path.join(args.data_dir, "symbols.txt")) as f_symbols:
         symbols = [line.strip() for line in f_symbols]
-    train_signal_map = {symbol: load_signal(path_train, path_corpus, symbol) for symbol in symbols[:1]}
-    dev_signal_map = {symbol: load_signal(path_dev, path_corpus, symbol) for symbol in symbols[:1]}
+    train_signal_map = {symbol: load_signal(path_train, path_corpus, symbol, keepnum=16) for symbol in symbols[:2]}
+    dev_signal_map = {symbol: load_signal(path_dev, path_corpus, symbol, keepnum=16) for symbol in symbols[:2]}
     params.eval_size = params.dev_size
     params.buffer_size = params.train_size
     train_inputs = input_fn("train", train_signal_map, word2vec, params)
     eval_inputs = input_fn("eval", dev_signal_map, word2vec, params)
     logging.info("- done.")
-    
+"""    
     logging.info("Creating the model...")
     train_model_spec = model_fn("train", train_inputs, params)
     eval_model_spec = model_fn("eval", eval_inputs, params, reuse=True)
@@ -62,3 +61,4 @@ if __name__ == '__main__':
 
     logging.info("Starting training for {} epoch(s)".format(params.num_epochs))
     train_and_evaluate(train_model_spec, eval_model_spec, args.model_dir, params, args.restore_dir)
+"""
