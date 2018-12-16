@@ -4,18 +4,16 @@ import tensorflow as tf
 
 def average_block(out, name):
     with tf.variable_scope(name):
-        num_nonzero = tf.reduce_sum(tf.cast(tf.greater(tf.reduce_sum(out, axis=0), 0), tf.float32))
-        out = tf.reduce_sum(out, axis=1)
+        num_nonzero = tf.reduce_sum(tf.cast(tf.greater(tf.reduce_sum(out, axis=-1), 0), tf.float32))
+        out = tf.reduce_sum(out, axis=-1)
         out = tf.divide(out, num_nonzero)
-        out = tf.expand_dims(out, 0)
-    print(out)
     return out
 
 def recurrent_block(out, block, name):
     with tf.variable_scope(name):
         cell_fw = tf.nn.rnn_cell.GRUCell(**block["cell_fw"])
         cell_bw = tf.nn.rnn_cell.GRUCell(**block["cell_bw"])
-        out, _, _ = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, out, **block["rnn"], dtype=tf.float32)
+        out, _, _ = tf.nn.static_bidirectional_rnn(cell_fw, cell_bw, out, **block["rnn"], dtype=tf.float32)
     return out
 
 def dense_block(out, block, name):
@@ -25,7 +23,6 @@ def dense_block(out, block, name):
             out = tf.layers.batch_normalization(out, **block["bn"])
         if "dropout" in block:
             out = tf.layers.dropout(out, **block["dropout"])
-    print(out)
     return out
 
 def output_block(out, block, name):
@@ -46,11 +43,11 @@ def build_model(mode, inputs, params):
         output: (tf.Tensor) output of the model
     """
     out = inputs['corpora']
+    print(out)
     if params.model_version == "mlp":
-        print(out)
-        out = tf.reshape(out, [out.get_shape()[0]*out.get_shape()[1], out.get_shape()[2]])
-        print(out)
         out = average_block(out, "average")
+        print(out)
+        out = tf.contrib.layers.flatten(out)
         print(out)
         for i, block in enumerate(params.dense_blocks):
             out = dense_block(out, block, f"dense_{i}")

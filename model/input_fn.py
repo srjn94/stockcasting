@@ -45,38 +45,33 @@ def _embed_text(article, word2vec):
 def _prepare_corpus_dataset(corpora, window_size, word2vec, verbose=False):
     dataset = tf.data.Dataset.from_generator(lambda: iter(corpora), output_types=tf.string)
     dataset = dataset.map(_read_from_file)
-    if verbose: print_dataset(dataset)
     dataset = dataset.map(lambda x: tf.map_fn(lambda y: _embed_text(y, word2vec), x, dtype=tf.float32))
-    if verbose: print_dataset(dataset)
     dataset = dataset.map(tf.transpose)
-    if verbose: print_dataset(dataset)
     dataset = dataset.window(window_size, shift=1)
     dataset = dataset.flat_map(lambda subdataset: subdataset \
-        .padded_batch(window_size, padded_shapes=[None, None]) \
+        .padded_batch(window_size, padded_shapes=[300, None]) \
     )
-    if verbose: print_dataset(dataset)
     dataset = dataset.take(len(corpora) - window_size)
-    if verbose: print_dataset(dataset)
     return dataset
 
 def _prepare_stock_dataset(stocks, thresholds):
     tensors = []
     for stock in stocks:
         if float(stock) < thresholds[0]:
-            new = [1, 0, 0]
+            new = 0
         elif float(stock) > thresholds[1]:
-            new = [0, 0, 1]
+            new = 1
         else:
-            new = [0, 1, 0]
-        tensors.append(tf.convert_to_tensor(new))
+            new = 2
+        tensors.append(tf.cast(tf.constant(new), tf.int64))
     dataset = tf.data.Dataset.from_tensor_slices(tensors)
+    print(dataset)
     return dataset
 
 def _merge_datasets(datasets, verbose=False):
     dataset = datasets[0]
     for other_dataset in datasets[1:]:
         dataset = dataset.concatenate(other_dataset)
-    if verbose: print_dataset(dataset)
     return dataset
 
 def input_fn(mode, signal_map, word2vec, params, verbose=False):
@@ -84,12 +79,14 @@ def input_fn(mode, signal_map, word2vec, params, verbose=False):
     stock_datasets = []
     for symbol, (corpora, stocks) in signal_map.items():
         corpus_datasets.append(_prepare_corpus_dataset(corpora, params.window_size, word2vec))
+        print(corpus_datasets)
         stock_datasets.append(_prepare_stock_dataset(stocks, params.thresholds).skip(params.window_size))
     corpus_dataset = _merge_datasets(corpus_datasets)
+    print(corpus_dataset)
     stock_dataset = _merge_datasets(stock_datasets)
-    corpus_dataset = corpus_dataset.padded_batch(params.batch_size, padded_shapes=[None,None,None])
+    corpus_dataset = corpus_dataset.padded_batch(params.batch_size, padded_shapes=[params.window_size,word2vec.vector_size,None])
+    print(corpus_dataset)
     stock_dataset = stock_dataset.batch(params.batch_size)
-
     dataset = tf.data.Dataset.zip((corpus_dataset, stock_dataset))
     dataset = dataset.prefetch(1)
     iterator = dataset.make_initializable_iterator()
