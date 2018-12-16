@@ -1,79 +1,88 @@
-"""Create the input data pipeline using `tf.data`"""
-
+import os
+import random
 import tensorflow as tf
+from datetime import datetime
 
+def _strip_punctuation(text):
+    text = tf.strings.regex_replace(text, tf.constant("[^0-9A-Za-z]"), tf.constant(" "))
+    return text
 
-def load_dataset_from_text(path_txt, vocab):
-    """Create tf.data Instance from txt file
+def _embed_text(article, word2vec):
+    def embedder(word): 
+        def embedder_aux(w):
+            if word in word2vec.vocab:
+                return word2vec.word_vec(w.decode("utf-8"))
+            return word2vec.word_vec(random.choice(word2vec.index2word))
+        return tf.py_func(embedder_aux, [word], tf.float32)
+    article = _strip_punctuation(article)
+    words = tf.string_split([article]).values
+    vectors = tf.map_fn(embedder, words, dtype=tf.float32)
+    vector = tf.math.reduce_mean(vectors, axis=0)
+    return vector
 
-    Args:
-        path_txt: (string) path containing one example per line
-        vocab: (tf.lookuptable)
+def load_signal(path, corpus_path, symbol):
+    with open(os.path.join(path, symbol, "dates.txt"), "r") as f_dates:
+        dates = [datetime.strptime(line.strip(), "%Y-%m-%d") for line in f_dates]
+    with open(os.path.join(path, symbol, "news.txt"), "r") as f_news:
+        corpora = []
+        for i, line in enumerate(f_news):
+            filenames = []
+            for name in line.strip().split(" "):
+                if name == "":
+                    filenames.append(os.path.join(corpus_path, "null.txt"))
+                else:
+                    filenames.append(os.path.join(corpus_path, dates[i].strftime("%Y/%m/%d"), name))
+            corpora.append(filenames)
+    with open(os.path.join(path, symbol, "stocks.txt"), "r") as f_stocks:
+        stocks = [float(line.strip()) for line in f_stocks]
+    return corpora, stocks
 
-    Returns:
-        dataset: (tf.Dataset) yielding list of ids of tokens for each example
-    """
-    # Load txt file, one example per line
-    dataset = tf.data.TextLineDataset(path_txt)
-    
-    # Convert line into list of tokens, splitting by white space
-    dataset = dataset.map(lambda string: tf.string_split([string]).values)
+def _filter_overlapping_values(x, window_size):
+    s1 = tf.slice(x[0], [window_size//2, 0], [-1, -1])
+    s2 = tf.slice(x[1], [0, 0], [window_size//2, -1])
+    return tf.concat((s1, s2), axis=0)
 
-    # Lookup tokens to return their ids
-    dataset = dataset.map(lambda tokens: (vocab.lookup(tokens), tf.size(tokens)))
+def _prepare_corpus_dataset(corpora, window_size, word2vec):
+    def generator():
+        for corpus in corpora:
+            yield corpus
+    return tf.data.Dataset.from_generator(generator, output_types=tf.string) \
+        .map(lambda x: tf.map_fn(tf.read_file, x, dtype=tf.string)) \
+        .map(lambda x: tf.map_fn(lambda y: _embed_text(y, word2vec), x, dtype=tf.float32)) \
 
-    return dataset
+def _prepare_stock_dataset(stocks, thresholds):
+    dataset = []
+    for stock in stocks:
+        if float(stock) < thresholds[0]:
+            new = [1, 0, 0]
+        elif float(stock) > thresholds[1]:
+            new = [0, 0, 1]
+        else:
+            new = [0, 1, 0]
+        dataset.append(tf.convert_to_tensor(new))
+    return tf.data.Dataset.from_tensor_slices(dataset)
 
-
-def input_fn(mode, sentences, labels, params):
-    """Input function for NER
-
-    Args:
-        mode: (string) 'train', 'eval' or any other mode you can think of
-                     At training, we shuffle the data and have multiple epochs
-        sentences: (tf.Dataset) yielding list of ids of words
-        datasets: (tf.Dataset) yielding list of ids of tags
-        params: (Params) contains hyperparameters of the model (ex: `params.num_epochs`)
-
-    """
-    # Load all the dataset in memory for shuffling is training
-    is_training = (mode == 'train')
-    buffer_size = params.buffer_size if is_training else 1
-
-    # Zip the sentence and the labels together
-    dataset = tf.data.Dataset.zip((sentences, labels))
-
-    # Create batches and pad the sentences of different length
-    padded_shapes = ((tf.TensorShape([None]),  # sentence of unknown size
-                      tf.TensorShape([])),     # size(words)
-                     (tf.TensorShape([None]),  # labels of unknown size
-                      tf.TensorShape([])))     # size(tags)
-
-    padding_values = ((params.id_pad_word,   # sentence padded on the right with id_pad_word
-                       0),                   # size(words) -- unused
-                      (params.id_pad_tag,    # labels padded on the right with id_pad_tag
-                       0))                   # size(tags) -- unused
-
-
-    dataset = (dataset
-        .shuffle(buffer_size=buffer_size)
-        .padded_batch(params.batch_size, padded_shapes=padded_shapes, padding_values=padding_values)
-        .prefetch(1)  # make sure you always have one batch ready to serve
-    )
-
-    # Create initializable iterator from this dataset so that we can reset at each epoch
+def input_fn(mode, signal_map, word2vec, params):
+    datasets = []
+    for symbol, (corpora, stocks) in signal_map.items():
+        corpus_dataset = _prepare_corpus_dataset(corpora, params.window_size, word2vec)
+        stock_dataset = _prepare_stock_dataset(stocks, params.thresholds).skip(params.window_size)
+        datasets.append(tf.data.Dataset.zip((corpus_dataset, stock_dataset)))
+    dataset = datasets[0]
+    for other_dataset in datasets[1:]:
+        dataset = dataset.batch(10).concatenate(other_dataset)
+    dataset = dataset.prefetch(1)
+        
     iterator = dataset.make_initializable_iterator()
-
-    # Query the output of the iterator for input to the model
-    ((sentence, sentence_lengths), (labels, _)) = iterator.get_next()
+    corpora, stock = iterator.get_next()
+    print(corpora)
+    print(stock)
     init_op = iterator.initializer
 
-    # Build and return a dictionnary containing the nodes / ops
     inputs = {
-        'sentence': sentence,
-        'labels': labels,
-        'sentence_lengths': sentence_lengths,
-        'iterator_init_op': init_op
+        "corpora": corpora,
+        "stock": stock,
+        "iterator_init_op": init_op
     }
 
     return inputs

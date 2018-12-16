@@ -2,6 +2,36 @@
 
 import tensorflow as tf
 
+def average_block(out, name):
+    with tf.variable_scope(name):
+        num_nonzero = tf.reduce_sum(tf.cast(tf.greater(tf.reduce_sum(out, axis=0), 0), tf.float32))
+        out = tf.reduce_sum(out, axis=1)
+        out = tf.divide(out, num_nonzero)
+        out = tf.expand_dims(out, 0)
+    print(out)
+    return out
+
+def recurrent_block(out, block, name):
+    with tf.variable_scope(name):
+        cell_fw = tf.nn.rnn_cell.GRUCell(**block["cell_fw"])
+        cell_bw = tf.nn.rnn_cell.GRUCell(**block["cell_bw"])
+        out, _, _ = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, out, **block["rnn"], dtype=tf.float32)
+    return out
+
+def dense_block(out, block, name):
+    with tf.variable_scope(name):
+        out = tf.layers.dense(out, **block["dense"])
+        if "bn" in block:
+            out = tf.layers.batch_normalization(out, **block["bn"])
+        if "dropout" in block:
+            out = tf.layers.dropout(out, **block["dropout"])
+    print(out)
+    return out
+
+def output_block(out, block, name):
+    with tf.variable_scope(name):
+        out = tf.layers.dense(out, **block["logits"])
+    return out
 
 def build_model(mode, inputs, params):
     """Compute logits of the model (output distribution)
@@ -15,26 +45,33 @@ def build_model(mode, inputs, params):
     Returns:
         output: (tf.Tensor) output of the model
     """
-    sentence = inputs['sentence']
+    out = inputs['corpora']
+    if params.model_version == "mlp":
+        print(out)
+        out = tf.reshape(out, [out.get_shape()[0]*out.get_shape()[1], out.get_shape()[2]])
+        print(out)
+        out = average_block(out, "average")
+        print(out)
+        for i, block in enumerate(params.dense_blocks):
+            out = dense_block(out, block, f"dense_{i}")
+            print(out)
+        out = output_block(out, params.output_block, "output")
 
-    if params.model_version == 'lstm':
-        # Get word embeddings for each token in the sentence
-        embeddings = tf.get_variable(name="embeddings", dtype=tf.float32,
-                shape=[params.vocab_size, params.embedding_size])
-        sentence = tf.nn.embedding_lookup(embeddings, sentence)
+    elif params.model_version == "rec":
+        out = average_block(out, "average")
+        for i, block in enumerate(params.recurrent_blocks):
+            out = recurrent_block(out, block, f"recurrent_{i}")
+        for i, block in enumerate(params.dense_blocks):
+            out = dense_block(out, block, f"dense_{i}")
+        out = output_block(out, params.output_block, "output")
 
-        # Apply LSTM over the embeddings
-        lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(params.lstm_num_units)
-        output, _  = tf.nn.dynamic_rnn(lstm_cell, sentence, dtype=tf.float32)
-
-        # Compute logits from the output of the LSTM
-        logits = tf.layers.dense(output, params.number_of_tags)
+    elif params.model_version == 'att':
+        raise NotImplementedError()
 
     else:
         raise NotImplementedError("Unknown model version: {}".format(params.model_version))
 
-    return logits
-
+    return out
 
 def model_fn(mode, inputs, params, reuse=False):
     """Model function defining the graph operations.
@@ -50,8 +87,8 @@ def model_fn(mode, inputs, params, reuse=False):
         model_spec: (dict) contains the graph operations or nodes needed for training / evaluation
     """
     is_training = (mode == 'train')
-    labels = inputs['labels']
-    sentence_lengths = inputs['sentence_lengths']
+    labels = inputs['stock']
+    print(labels)
 
     # -----------------------------------------------------------
     # MODEL: define the layers of the model
@@ -61,9 +98,9 @@ def model_fn(mode, inputs, params, reuse=False):
         predictions = tf.argmax(logits, -1)
 
     # Define loss and accuracy (we need to apply a mask to account for padding)
+    print(logits)
+    print(labels)
     losses = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)
-    mask = tf.sequence_mask(sentence_lengths)
-    losses = tf.boolean_mask(losses, mask)
     loss = tf.reduce_mean(losses)
     accuracy = tf.reduce_mean(tf.cast(tf.equal(labels, predictions), tf.float32))
 

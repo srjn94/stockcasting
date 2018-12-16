@@ -12,12 +12,6 @@ parser.add_argument("-f", "--stocks_file", type=str, default="data/companylist.c
 
 def get_keyphrases(symbol, name):
     keyphrases = [symbol, name]
-    #junkwords = ["Inc.", "Inc", "inc.", "inc", "Incorporated", "incorporated", "Corporation", "corporation", "com", "holdings", "Holdings"]
-    #keyphrases.append(" ".join("".join(c for c in word if c not in ",.") for word in re.split("\.", name) if word not in junkwords))
-    #uppers = [keyphrase.upper() for keyphrase in keyphrases]
-    #lowers = [keyphrase.lower() for keyphrase in keyphrases]
-    #keyphrases.extend(uppers)
-    #keyphrases.extend(lowers)
     return keyphrases
 
 if __name__ == "__main__":

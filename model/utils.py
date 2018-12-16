@@ -2,7 +2,8 @@
 
 import json
 import logging
-
+import re
+import tensorflow as tf
 
 class Params():
     """Class that loads hyperparameters from a json file.
@@ -29,11 +30,28 @@ class Params():
             params = json.load(f)
             self.__dict__.update(params)
 
+    def evaluate(self, *args):
+        """Evaluate json entries of form ${.*} """
+        def recurse(root):
+            if isinstance(root, dict):
+                generator = root.items()    
+            elif isinstance(root, list):
+                generator = enumerate(root)
+            else:
+                return
+            for index, value in generator:
+                if isinstance(value, str):
+                    search = re.search("\${(.*)}", value)
+                    if search is not None:
+                        root[index] = eval(search.group(1))
+                else:
+                    recurse(value)
+        recurse(self.__dict__)
+    
     @property
     def dict(self):
         """Gives dict-like access to Params instance by `params.dict['learning_rate']`"""
         return self.__dict__
-
 
 def set_logger(log_path):
     """Sets the logger to log info in terminal and file `log_path`.
